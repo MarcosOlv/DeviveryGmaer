@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Life RPG</title>
+<title>Rota RPG</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Life Rpg">
+<meta name="apple-mobile-web-app-title" content="Rota RPG">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0B0E14">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -249,6 +249,13 @@
   .rrpg-cat-badge { display:inline-block; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;}
   .rrpg-mission-group-separator { height: 1px; background: linear-gradient(90deg, transparent, var(--border), transparent); margin: 12px 0 8px; }
   .rrpg-mission-category-header { margin: 6px 0 8px; }
+  .rrpg-checklist-card { display:block; }
+  .rrpg-checklist-item { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); }
+  .rrpg-checklist-item:last-child { border-bottom:none; }
+  .rrpg-checklist-item input[type=checkbox] { accent-color: var(--accent); }
+  .rrpg-checklist-item.done .text { text-decoration:line-through; color:var(--text-muted); }
+  .rrpg-checklist-meta { font-size:11px; color:var(--text-muted); margin-top:6px; }
+  .rrpg-checklist-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -365,7 +372,9 @@
         bills: [],
         categories: DEFAULT_FINANCE_CATEGORIES.map(c => ({ ...c })),
         savingsGoal: 100,
-        monthlyBudget: 1000
+        monthlyBudget: 1000,
+        creditPurchases: [],
+        cardInvoices: []
       },
       missionCategories: [
         { id: 'delivery', name: 'Delivery', color: '#FFB23E' },
@@ -384,7 +393,8 @@
         { id:uid(), categoryId:'delivery', title:'Ganhar R$150', xp:50, gold:10, lastCompletedDate:null, type:'standard', progress:0, target:1, difficulty:'difícil', period:'semanal' },
         { id:uid(), categoryId:'delivery', title:'Manter streak de 3 dias', xp:40, gold:8, lastCompletedDate:null, type:'streak', progress:0, target:3, metric:'streak', difficulty:'médio', period:'semanal' },
         { id:uid(), categoryId:'delivery', title:'Ganhar R$200 em entregas', xp:60, gold:12, lastCompletedDate:null, type:'progress', progress:0, target:200, metric:'value', difficulty:'difícil', period:'semanal' }
-      ]
+      ],
+      checklists: []
     };
   }
 
@@ -422,9 +432,22 @@
     s.finance.monthlyBudget = (s.finance.monthlyBudget === undefined || s.finance.monthlyBudget === null)
       ? 1000
       : Number(s.finance.monthlyBudget) || 1000;
+    s.finance.creditPurchases = s.finance.creditPurchases || [];
+    s.finance.cardInvoices = s.finance.cardInvoices || [];
+    s.finance.cards = (s.finance.cards || []).map(card => ({
+      id: card.id || uid(),
+      name: card.name || 'Cartão',
+      limit: Number(card.limit) || 0,
+      closingDay: Number(card.closingDay) || 1,
+      dueDay: Number(card.dueDay) || 10,
+      used: Number(card.used) || 0,
+      color: card.color || '#FFB23E'
+    }));
     if (!s.missionCategories) s.missionCategories = d.missionCategories;
     if (!s.missions) s.missions = d.missions;
-    s.missions.forEach(m => { if (!m.type) m.type = 'standard'; if (m.progress === undefined) m.progress = 0; if (m.target === undefined) m.target = 1; if (!m.metric) m.metric = 'daily'; if (!m.difficulty) m.difficulty = 'fácil'; if (!m.period) m.period = 'diária'; });
+    s.checklists = s.checklists || [];
+    s.missions.forEach(m => { if (!m.type) m.type = 'standard'; if (m.progress === undefined) m.progress = 0; if (m.target === undefined) m.target = 1; if (!m.metric) m.metric = 'daily'; if (!m.difficulty) m.difficulty = 'fácil'; if (!m.period) m.period = 'diária'; if (!m.recurrenceType) m.recurrenceType = 'unique'; if (!m.weekdays) m.weekdays = []; if (m.autoResetChecklist === undefined) m.autoResetChecklist = true; if (!m.checklistMode) m.checklistMode = 'independent'; });
+    s.checklists.forEach(cl => { if (!cl.items) cl.items = []; if (!cl.history) cl.history = []; if (!cl.category) cl.category = 'Geral'; if (!cl.recurrenceType) cl.recurrenceType = 'unique'; if (cl.autoReset === undefined) cl.autoReset = true; });
     return s;
   }
 
@@ -483,6 +506,7 @@
 
   let missionSubTab = 'diarias';
   let missionFilterCat = 'all';
+  let checklistFilterCat = 'all';
   let newMissionCat = "youtube";
   let newCatColor = SWATCHES[0];
 
@@ -660,6 +684,46 @@
     return (state.finance.categories || []).filter(Boolean).length ? (state.finance.categories || []) : DEFAULT_FINANCE_CATEGORIES.map(c => ({ ...c }));
   }
 
+  function getCreditCards(){
+    return (state.finance.cards || []).filter(Boolean);
+  }
+
+  function addCreditCard(data){
+    const card = {
+      id: uid(),
+      name: String(data.name || '').trim() || 'Cartão',
+      limit: Number(data.limit) || 0,
+      closingDay: Number(data.closingDay) || 1,
+      dueDay: Number(data.dueDay) || 10,
+      used: 0,
+      color: data.color || '#FFB23E'
+    };
+    if (!card.name) return null;
+    state.finance.cards = state.finance.cards || [];
+    state.finance.cards.push(card);
+    persist();
+    return card;
+  }
+
+  function updateCreditCard(cardId, data){
+    const card = (state.finance.cards || []).find(c => c.id === cardId);
+    if (!card) return null;
+    card.name = String(data.name || card.name).trim() || card.name;
+    card.limit = Number(data.limit) || card.limit;
+    card.closingDay = Number(data.closingDay) || card.closingDay;
+    card.dueDay = Number(data.dueDay) || card.dueDay;
+    card.color = data.color || card.color;
+    persist();
+    return card;
+  }
+
+  function deleteCreditCard(cardId){
+    state.finance.cards = (state.finance.cards || []).filter(c => c.id !== cardId);
+    state.finance.creditPurchases = (state.finance.creditPurchases || []).filter(p => p.cardId !== cardId);
+    persist();
+    return true;
+  }
+
   function addFinanceCategory(name, color){
     const trimmedName = String(name || '').trim();
     if (!trimmedName) return false;
@@ -747,6 +811,105 @@
     return items[0];
   }
 
+  function getCreditCardUsage(card){
+    const used = (state.finance.creditPurchases || []).filter(p => p.cardId === card.id).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const available = Math.max(0, Number(card.limit || 0) - used);
+    return { used, available, percent: card.limit > 0 ? Math.min(100, Math.round((used / card.limit) * 100)) : 0 };
+  }
+
+  function getCreditCardInvoices(cardId){
+    return (state.finance.cardInvoices || []).filter(inv => inv.cardId === cardId).sort((a,b) => new Date(b.monthKey) - new Date(a.monthKey));
+  }
+
+  function getCreditCardForecast(){
+    const purchases = (state.finance.creditPurchases || []).filter(p => p.installments && p.installments.length);
+    const byMonth = {};
+    purchases.forEach(purchase => {
+      purchase.installments.forEach(installment => {
+        if (!installment.paid) {
+          const monthKey = installment.dueDate.slice(0,7);
+          if (!byMonth[monthKey]) byMonth[monthKey] = 0;
+          byMonth[monthKey] += Number(installment.amount) || 0;
+        }
+      });
+    });
+    return Object.entries(byMonth).sort(([a],[b]) => a.localeCompare(b)).map(([monthKey, total]) => ({ monthKey, total }));
+  }
+
+  function buildCreditPurchase(data){
+    const purchase = {
+      id: uid(),
+      cardId: data.cardId,
+      description: String(data.description || '').trim(),
+      category: String(data.category || 'Outros').trim(),
+      amount: Number(data.amount) || 0,
+      purchaseDate: data.purchaseDate || todayStr(),
+      paymentType: data.paymentType || 'credit',
+      installmentType: data.installmentType || 'avista',
+      totalInstallments: Number(data.totalInstallments) || 1,
+      installmentValue: Number(data.installmentValue) || 0,
+      currentInstallment: Number(data.currentInstallment) || 1,
+      installments: [],
+      paid: Boolean(data.paid),
+      invoiceKey: data.invoiceKey || null,
+      dueDate: data.dueDate || todayStr(),
+      createdAt: new Date().toISOString()
+    };
+    if (purchase.installmentType === 'parcelado' && purchase.totalInstallments > 1) {
+      const total = Number(purchase.amount) || 0;
+      const perInstallment = purchase.installmentValue > 0 ? purchase.installmentValue : (total / purchase.totalInstallments);
+      const startMonth = new Date(purchase.purchaseDate + 'T00:00:00');
+      for (let i = 1; i <= purchase.totalInstallments; i++) {
+        const due = new Date(startMonth);
+        due.setMonth(due.getMonth() + (i - 1));
+        purchase.installments.push({
+          id: uid(),
+          number: i,
+          amount: perInstallment,
+          paid: i < purchase.currentInstallment,
+          dueDate: due.toISOString().slice(0,10)
+        });
+      }
+    } else {
+      purchase.installments.push({ id: uid(), number: 1, amount: Number(purchase.amount) || 0, paid: Boolean(purchase.paid), dueDate: purchase.dueDate });
+    }
+    return purchase;
+  }
+
+  function addCreditPurchase(data){
+    const purchase = buildCreditPurchase(data);
+    if (!purchase.description || !purchase.cardId || !purchase.amount) return null;
+    state.finance.creditPurchases = state.finance.creditPurchases || [];
+    state.finance.creditPurchases.unshift(purchase);
+    const card = (state.finance.cards || []).find(c => c.id === purchase.cardId);
+    if (card) card.used = (state.finance.creditPurchases || []).filter(p => p.cardId === purchase.cardId).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    persist();
+    return purchase;
+  }
+
+  function updateCreditPurchase(purchaseId, data){
+    const purchase = (state.finance.creditPurchases || []).find(p => p.id === purchaseId);
+    if (!purchase) return null;
+    Object.assign(purchase, data);
+    persist();
+    return purchase;
+  }
+
+  function deleteCreditPurchase(purchaseId){
+    state.finance.creditPurchases = (state.finance.creditPurchases || []).filter(p => p.id !== purchaseId);
+    persist();
+    return true;
+  }
+
+  function markInvoicePaid(cardId, invoiceId){
+    const invoice = (state.finance.cardInvoices || []).find(inv => inv.id === invoiceId && inv.cardId === cardId);
+    if (!invoice) return false;
+    invoice.paid = true;
+    invoice.paidAt = new Date().toISOString();
+    persist();
+    return true;
+  }
+
   function getFinanceAlerts(){
     const week = weekKey(todayStr());
     const weekSummary = computeWeekSummary(week);
@@ -759,6 +922,12 @@
     if (fuelSpend > 0 && fuelSpend >= Math.max(50, weekSummary.receitas * 0.15)) {
       alerts.push({ type: 'fuel', title: 'Seu gasto de combustível está alto', message: 'Você gastou ' + brl(fuelSpend) + ' em combustível esta semana.' });
     }
+    (getCreditCards() || []).forEach(card => {
+      const usage = getCreditCardUsage(card);
+      if (card.limit > 0 && usage.percent >= 80) {
+        alerts.push({ type: 'credit-limit', title: 'Limite do cartão quase no máximo', message: card.name + ' está com ' + usage.percent + '% do limite utilizado.' });
+      }
+    });
     return alerts;
   }
 
@@ -821,6 +990,26 @@
     const lucroLiquido = receitas - despesas;
     const topExpenseItem = computeTopExpenseItem(ym);
     return { bankTotal, receitas, despesas, lucroLiquido, patrimonio, monthStats, topExpenseItem };
+  }
+
+  function exportFinanceCsv(){
+    const rows = [['tipo','descricao','categoria','valor','data','cartao']];
+    state.expenses.forEach(entry => rows.push(['gasto', entry.description, entry.category || 'Outros', entry.amount, entry.date, '']));
+    state.finance.creditPurchases.forEach(entry => rows.push(['cartao', entry.description, entry.category || 'Outros', entry.amount, entry.purchaseDate, entry.cardId]));
+    const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'rota-rpg-financeiro.csv'; a.click(); URL.revokeObjectURL(url);
+  }
+
+  function exportFinanceXlsx(){
+    const rows = [['tipo','descricao','categoria','valor','data','cartao']];
+    state.expenses.forEach(entry => rows.push(['gasto', entry.description, entry.category || 'Outros', entry.amount, entry.date, '']));
+    state.finance.creditPurchases.forEach(entry => rows.push(['cartao', entry.description, entry.category || 'Outros', entry.amount, entry.purchaseDate, entry.cardId]));
+    const data = rows.map(r => r.join('\t')).join('\n');
+    const blob = new Blob([data], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'rota-rpg-financeiro.xls'; a.click(); URL.revokeObjectURL(url);
   }
 
   function lastNMonthsLabels(n){
@@ -995,6 +1184,166 @@
     return Number(m.gold || 0) + difficultyBonus;
   }
 
+  function getChecklistProgress(checklist){
+    const items = Array.isArray(checklist.items) ? checklist.items : [];
+    const total = items.length;
+    const completed = items.filter(item => item.done).length;
+    return { total, completed, percent: total ? Math.round((completed / total) * 100) : 0 };
+  }
+
+  function getChecklistById(id){ return state.checklists.find(item => item.id === id) || null; }
+
+  function createChecklist(data){
+    const checklist = {
+      id: uid(),
+      title: String(data.title || 'Checklist').trim(),
+      category: String(data.category || 'Geral').trim(),
+      items: (data.items || []).map(item => ({ id: uid(), text: String(item.text || '').trim(), done: false })),
+      linkedMissionId: data.linkedMissionId || null,
+      missionMode: data.missionMode || 'independent',
+      xpBonus: Number(data.xpBonus) || 0,
+      goldBonus: Number(data.goldBonus) || 0,
+      recurrenceType: data.recurrenceType || 'unique',
+      autoReset: data.autoReset !== false,
+      history: [],
+      lastCompletedDate: null
+    };
+    state.checklists.unshift(checklist);
+    if (checklist.linkedMissionId) {
+      const mission = state.missions.find(m => m.id === checklist.linkedMissionId);
+      if (mission) {
+        mission.linkedChecklistId = checklist.id;
+        mission.checklistMode = checklist.missionMode || 'independent';
+      }
+    }
+    persist();
+    return checklist;
+  }
+
+  function toggleChecklistItem(checklistId, itemId){
+    const checklist = getChecklistById(checklistId);
+    if (!checklist) return false;
+    const item = checklist.items.find(x => x.id === itemId);
+    if (!item) return false;
+    item.done = !item.done;
+    const progress = getChecklistProgress(checklist);
+    if (progress.completed > 0) {
+      state.character.xp += 2;
+    }
+    if (progress.total > 0 && progress.completed === progress.total && (!checklist.lastCompletedDate || checklist.lastCompletedDate !== todayStr())) {
+      checklist.lastCompletedDate = todayStr();
+      checklist.history.unshift({ date: new Date().toISOString(), title: checklist.title });
+      state.character.xp += Number(checklist.xpBonus || 0) + 5;
+      state.character.gold += Number(checklist.goldBonus || 0) + 2;
+      if (checklist.linkedMissionId) {
+        const mission = state.missions.find(m => m.id === checklist.linkedMissionId);
+        if (mission && mission.checklistMode === 'bonus') {
+          state.character.xp += 10;
+          state.character.gold += 3;
+        }
+      }
+    }
+    const mission = state.missions.find(m => m.id === checklist.linkedMissionId);
+    if (mission && mission.checklistMode === 'progress') {
+      const target = Number(mission.target || 1) || 1;
+      mission.progress = Math.min(target, Math.round((progress.completed / Math.max(1, progress.total)) * target));
+      if (mission.progress >= target) {
+        completeMission(mission.id, false);
+      }
+    }
+    persist();
+    return true;
+  }
+
+  function addChecklistItem(checklistId, text){
+    const checklist = getChecklistById(checklistId);
+    const trimmed = String(text || '').trim();
+    if (!checklist || !trimmed) return false;
+    checklist.items.push({ id: uid(), text: trimmed, done: false });
+    persist();
+    return true;
+  }
+
+  function updateChecklistItemText(checklistId, itemId, text){
+    const checklist = getChecklistById(checklistId);
+    if (!checklist) return false;
+    const item = checklist.items.find(x => x.id === itemId);
+    if (!item) return false;
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return false;
+    item.text = trimmed;
+    persist();
+    return true;
+  }
+
+  function deleteChecklist(checklistId){
+    state.checklists = state.checklists.filter(item => item.id !== checklistId);
+    persist();
+    return true;
+  }
+
+  function createMissionFromChecklist(checklistId){
+    const checklist = getChecklistById(checklistId);
+    if (!checklist) return null;
+    const mission = {
+      id: uid(),
+      title: checklist.title,
+      categoryId: 'delivery',
+      xp: 60,
+      gold: 15,
+      lastCompletedDate: null,
+      type: 'standard',
+      progress: 0,
+      target: 1,
+      difficulty: 'médio',
+      period: 'diária',
+      recurrenceType: 'unique',
+      checklistMode: 'independent',
+      linkedChecklistId: checklist.id,
+      autoResetChecklist: true
+    };
+    state.missions.unshift(mission);
+    checklist.linkedMissionId = mission.id;
+    checklist.missionMode = 'progress';
+    persist();
+    return mission;
+  }
+
+  function shouldResetMissionOccurrence(mission){
+    if (!mission || !mission.recurrenceType || mission.recurrenceType === 'unique') return false;
+    const today = todayStr();
+    if (!mission.lastOccurrenceDate) { mission.lastOccurrenceDate = today; return false; }
+    const last = mission.lastOccurrenceDate;
+    const diffDays = Math.max(0, Math.round((new Date(today + 'T00:00:00') - new Date(last + 'T00:00:00')) / 86400000));
+    if (mission.recurrenceType === 'daily') return diffDays >= 1;
+    if (mission.recurrenceType === 'weekly') return diffDays >= 7;
+    if (mission.recurrenceType === 'monthly') return today.slice(0,7) !== last.slice(0,7);
+    if (mission.recurrenceType === 'custom') return diffDays >= (Number(mission.customIntervalDays) || 1);
+    if (mission.recurrenceType === 'weekdays') return (mission.weekdays || []).includes(String(new Date(today + 'T00:00:00').getDay()));
+    return false;
+  }
+
+  function ensureMissionOccurrences(){
+    const today = todayStr();
+    state.missions.forEach(mission => {
+      if (!mission.recurrenceType || mission.recurrenceType === 'unique') return;
+      if (!mission.lastOccurrenceDate) {
+        mission.lastOccurrenceDate = today;
+        return;
+      }
+      if (shouldResetMissionOccurrence(mission)) {
+        mission.lastCompletedDate = null;
+        mission.progress = 0;
+        mission.lastOccurrenceDate = today;
+        const checklist = getChecklistById(mission.linkedChecklistId);
+        if (mission.autoResetChecklist !== false && checklist && checklist.autoReset !== false) {
+          checklist.items.forEach(item => { item.done = false; });
+          checklist.lastCompletedDate = null;
+        }
+      }
+    });
+  }
+
   function completeMission(id, silent = false){
     const m = state.missions.find(x => x.id === id);
     if (!m) return false;
@@ -1010,6 +1359,23 @@
         extraMsg = " • +10 HP / +20 Stamina";
     }
 
+    const linkedChecklist = m.linkedChecklistId ? getChecklistById(m.linkedChecklistId) : null;
+    if (m.checklistMode === 'required' && linkedChecklist) {
+      const progress = getChecklistProgress(linkedChecklist);
+      if (progress.percent < 100) {
+        if (!silent) pushToast({ title: 'Checklist pendente', sub: 'Complete todos os itens antes de finalizar a missão.' });
+        return false;
+      }
+    }
+    if (m.checklistMode === 'bonus' && linkedChecklist) {
+      const progress = getChecklistProgress(linkedChecklist);
+      if (progress.percent === 100) {
+        state.character.xp += 15;
+        state.character.gold += 5;
+        extraMsg += ' • +15 XP bônus';
+      }
+    }
+
     persist();
     if (!silent) {
       pushToast({ title: "Missão Concluída!", sub: `+${m.xp} XP • +${getMissionReward(m)} 🪙${extraMsg}` });
@@ -1022,29 +1388,9 @@
     if (completeMission(id)) render();
   }
 
-  function resetDailyMissions(){
-    const today = todayStr();
-    const lastResetDate = state.claims && state.claims.missionsResetDate;
-    if (lastResetDate === today) return false;
-
-    state.missions.forEach(m => {
-      if ((m.period || 'diária') !== 'diária') return;
-      if (m.lastCompletedDate && m.lastCompletedDate !== today) {
-        m.lastCompletedDate = null;
-      }
-      if (m.type !== 'standard') {
-        m.progress = 0;
-      }
-    });
-
-    state.claims = state.claims || {};
-    state.claims.missionsResetDate = today;
-    return true;
-  }
-
   function refreshMissionProgress(){
     const today = todayStr();
-    const didReset = resetDailyMissions();
+    ensureMissionOccurrences();
     state.missions.forEach(m => {
       if (m.lastCompletedDate === today) return;
       if (m.type === 'streak') {
@@ -1062,7 +1408,7 @@
         completeMission(m.id, false);
       }
     });
-    return didReset;
+    return true;
   }
 
   function startShiftTimer(){ stopShiftTimer(); shiftInterval = setInterval(render, 1000); }
@@ -1096,7 +1442,7 @@
     let html = '';
 
     // Topbar
-    html += '<div class="rrpg-topbar"><div class="rrpg-title"><span class="dot"></span>Life Rpg</div><div class="rrpg-theme-picker">';
+    html += '<div class="rrpg-topbar"><div class="rrpg-title"><span class="dot"></span>ROTA RPG</div><div class="rrpg-theme-picker">';
     THEMES.forEach(t => { html += '<button class="rrpg-theme-dot' + (state.settings.theme===t.id?' active':'') + '" style="background:' + t.color + '" data-theme-pick="' + t.id + '"></button>'; });
     html += '</div></div>';
 
@@ -1194,7 +1540,8 @@
     // ============ ABA 2: MISSÕES ============
     if (activeTab === 'missoes') {
       html += '<div class="rrpg-tab-switch">';
-      html += '<button class="' + (missionSubTab==='diarias'?'active':'') + '" data-msubtab="diarias">📝 Missões Diárias</button>';
+      html += '<button class="' + (missionSubTab==='diarias'?'active':'') + '" data-msubtab="diarias">� Missões Diárias</button>';
+      html += '<button class="' + (missionSubTab==='secundarias'?'active':'') + '" data-msubtab="secundarias">⭐ Secundárias</button>';
       html += '<button class="' + (missionSubTab==='conquistas'?'active':'') + '" data-msubtab="conquistas">🏆 Conquistas</button></div>';
 
       if (missionSubTab === 'diarias') {
@@ -1232,6 +1579,13 @@
             html += '<div class="rrpg-mission-info"><span class="rrpg-cat-badge" style="background:' + cat.color + '40; color:' + cat.color + '">' + esc(cat.name) + '</span>';
             html += '<div class="rrpg-mission-title">' + esc(m.title) + '</div>';
             html += '<div class="rrpg-mission-rewards">✨ +' + m.xp + ' XP &nbsp; 🪙 +' + getMissionReward(m) + ' &nbsp; • ' + esc(m.period || 'diária') + ' · ' + esc(m.difficulty || 'fácil') + '</div>';
+            if (m.linkedChecklistId) {
+              const linkedChecklist = getChecklistById(m.linkedChecklistId);
+              if (linkedChecklist) {
+                const linkedProgress = getChecklistProgress(linkedChecklist);
+                html += '<div class="rrpg-goal-progress-text">Checklist: ' + linkedProgress.completed + '/' + linkedProgress.total + ' itens · ' + linkedProgress.percent + '%</div>';
+              }
+            }
             if (m.type === 'streak' || m.type === 'progress') {
               const progressValue = Number(m.progress || 0);
               const targetValue = Number(m.target || 1);
@@ -1255,7 +1609,6 @@
         SWATCHES.forEach(sw => { html += '<div class="rrpg-swatch-btn' + (newCatColor===sw?' active':'') + '" style="background:' + sw + '" data-cswatch="' + sw + '"></div>'; });
         html += '</div><button class="rrpg-submit-sm" id="add-cat-btn" style="width:100%;margin-top:8px;">Salvar Categoria</button></div></details>';
 
-        // Loja
         html += '<div class="rrpg-card" style="margin-top:14px;">';
         html += '<div class="rrpg-section-head"><div class="rrpg-section-label">Loja de recompensas</div><span class="rrpg-goal-reward">🪙 ' + c.gold + '</span></div>';
         if (!state.rewards.length) html += '<div class="rrpg-empty">Crie recompensas reais pra trocar por ouro.</div>';
@@ -1265,6 +1618,52 @@
         });
         html += '<div class="rrpg-newreward"><input type="text" id="new-reward-name" placeholder="Recompensa" value="' + esc(newRewardName) + '"><input type="number" id="new-reward-cost" placeholder="Custo" value="' + esc(newRewardCost) + '"><button class="rrpg-submit-sm" id="add-reward-btn">+</button></div>';
         html += '</div>';
+      }
+
+      if (missionSubTab === 'secundarias') {
+        const checklistCats = ['all', ...new Set(state.checklists.map(cl => cl.category).filter(Boolean))];
+        html += '<div class="rrpg-chip-row">';
+        checklistCats.forEach(cat => {
+          html += '<div class="rrpg-chip' + (checklistFilterCat===cat ? ' selected' : '') + '" data-checklist-filter="' + cat + '">' + esc(cat === 'all' ? 'Todas' : cat) + '</div>';
+        });
+        html += '</div>';
+        const visibleChecklists = state.checklists.filter(cl => checklistFilterCat === 'all' || cl.category === checklistFilterCat);
+        if (!visibleChecklists.length) html += '<div class="rrpg-empty">Nenhum checklist secundário criado ainda.</div>';
+        visibleChecklists.forEach(cl => {
+          const progress = getChecklistProgress(cl);
+          html += '<div class="rrpg-card rrpg-checklist-card">';
+          html += '<div class="rrpg-section-head"><div class="rrpg-section-label">⭐ Secundária</div><span class="rrpg-goal-reward">' + progress.percent + '%</span></div>';
+          html += '<div class="rrpg-mission-title">' + esc(cl.title) + '</div>';
+          html += '<div class="rrpg-goal-progress-text">Categoria: ' + esc(cl.category || 'Geral') + '</div>';
+          html += '<div class="rrpg-progress-track" style="margin-top:8px;"><div class="rrpg-progress-fill" style="width:' + progress.percent + '%"></div></div>';
+          html += '<div class="rrpg-checklist-meta">' + progress.completed + '/' + progress.total + ' itens concluídos</div>';
+          if (cl.linkedMissionId) {
+            const mission = state.missions.find(m => m.id === cl.linkedMissionId);
+            html += '<div class="rrpg-checklist-meta">Vinculada a: ' + esc(mission ? mission.title : 'missão') + ' · ' + esc(cl.missionMode || 'independent') + '</div>';
+          }
+          (cl.items || []).forEach(item => {
+            html += '<label class="rrpg-checklist-item' + (item.done ? ' done' : '') + '"><input type="checkbox" data-toggle-checklist-item="' + cl.id + '" data-item-id="' + item.id + '" ' + (item.done ? 'checked' : '') + '><span class="text">' + esc(item.text) + '</span><button class="rrpg-chip-del" data-edit-checklist-item="' + cl.id + '" data-item-id="' + item.id + '" title="Editar item">✎</button></label>';
+          });
+          html += '<div class="rrpg-newlist"><input type="text" id="checklist-item-input-' + cl.id + '" placeholder="Novo item"><button class="rrpg-submit-sm" data-add-checklist-item="' + cl.id + '">Adicionar</button></div>';
+          html += '<div class="rrpg-checklist-actions">';
+          html += '<button class="rrpg-outline-btn" data-delete-checklist="' + cl.id + '">Excluir</button>';
+          html += '<button class="rrpg-outline-btn" data-create-mission-from-checklist="' + cl.id + '">Transformar em missão</button></div>';
+          if (cl.history && cl.history.length) {
+            html += '<div class="rrpg-goal-progress-text" style="margin-top:8px;">Histórico: ' + cl.history.slice(0, 3).map(entry => new Date(entry.date).toLocaleDateString('pt-BR')).join(', ') + '</div>';
+          }
+          html += '</div>';
+        });
+
+        html += '<details class="rrpg-details-group" style="margin-top:12px;"><summary>+ Criar Novo Checklist</summary><div class="rrpg-details-content">';
+        html += '<input type="text" id="new-checklist-title" placeholder="Nome do checklist" style="width:100%;margin-bottom:8px;">';
+        html += '<input type="text" id="new-checklist-category" placeholder="Categoria (Ex: Delivery)" style="width:100%;margin-bottom:8px;">';
+        html += '<div class="rrpg-newlist"><select id="new-checklist-link"><option value="none">Não vincular</option><option value="existing">Vincular a missão existente</option><option value="new">Criar nova missão</option></select><select id="new-checklist-mode"><option value="independent">Independente</option><option value="required">Obrigatório</option><option value="bonus">Bônus</option><option value="progress">Progresso</option></select></div>';
+        html += '<div class="rrpg-newlist"><select id="new-checklist-mission">';
+        state.missions.forEach(m => { html += '<option value="' + m.id + '">' + esc(m.title) + '</option>'; });
+        html += '</select><input type="text" id="new-checklist-mission-title" placeholder="Nome da nova missão"></div>';
+        html += '<div class="rrpg-newlist"><select id="new-checklist-recurrence"><option value="unique">Única</option><option value="daily">Diária</option><option value="weekly">Semanal</option><option value="monthly">Mensal</option><option value="custom">Personalizada</option></select><input type="number" id="new-checklist-interval" placeholder="Intervalo em dias" value="1"><select id="new-checklist-autoreset"><option value="yes">Reiniciar automaticamente</option><option value="no">Manter progresso</option></select></div>';
+        html += '<div class="rrpg-newlist"><input type="number" id="new-checklist-xp-bonus" placeholder="XP bônus"><input type="number" id="new-checklist-gold-bonus" placeholder="Ouro bônus"></div>';
+        html += '<button class="rrpg-submit-sm" id="add-checklist-btn" style="width:100%;margin-top:8px;">Salvar checklist</button></div></details>';
       }
 
       if (missionSubTab === 'conquistas') {
@@ -1390,8 +1789,97 @@
         html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">💸 Registrar Gastos (Operacional)</div><div class="rrpg-newlist"><input type="text" id="new-expense-desc" placeholder="Ex: Combustível"><input type="text" inputmode="decimal" id="new-expense-amount" placeholder="Valor R$"><select id="new-expense-category" style="min-width:140px; padding:10px; border-radius:10px; border:1px solid var(--border); background:var(--bg-card-2); color:var(--text);">' + renderFinanceCategoryOptions('Outros') + '</select><button class="rrpg-submit-sm" id="add-expense-btn">Registrar</button></div></div>';
         html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📄 Registrar Contas Fixas</div><div class="rrpg-newlist"><input type="text" id="new-bill-name" placeholder="Ex: Internet"><input type="text" inputmode="decimal" id="new-bill-amount" placeholder="Valor R$"><select id="new-bill-category" style="min-width:140px; padding:10px; border-radius:10px; border:1px solid var(--border); background:var(--bg-card-2); color:var(--text);">' + renderFinanceCategoryOptions('Outros') + '</select></div><button class="rrpg-submit-sm" id="add-bill-btn" style="width:100%;margin-top:8px;">Salvar Conta Fixa</button></div>';
         html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">🏦 Registrar Contas Bancárias</div><div class="rrpg-newlist"><input type="text" id="new-account-name" placeholder="Banco"><input type="text" inputmode="decimal" id="new-account-balance" placeholder="Saldo R$"><button class="rrpg-submit-sm" id="add-account-btn">Salvar</button></div></div>';
-        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">💳 Registrar Cartões</div><div class="rrpg-newlist"><input type="text" id="new-card-name" placeholder="Cartão"><input type="text" inputmode="decimal" id="new-card-limit" placeholder="Limite"><input type="text" inputmode="decimal" id="new-card-used" placeholder="Fatura"><button class="rrpg-submit-sm" id="add-card-btn">Salvar</button></div></div>';
-        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Registrar Investimentos</div><div class="rrpg-newlist"><input type="text" id="new-invest-name" placeholder="Ativo"><input type="text" inputmode="decimal" id="new-invest-amount" placeholder="Valor R$"><button class="rrpg-submit-sm" id="add-invest-btn">Salvar</button></div></div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">💳 Cartões de Crédito</div>';
+        html += '<div class="rrpg-newlist"><input type="text" id="new-card-name" placeholder="Nome do cartão"><input type="text" inputmode="decimal" id="new-card-limit" placeholder="Limite total"><input type="text" inputmode="decimal" id="new-card-closing" placeholder="Fechamento"><input type="text" inputmode="decimal" id="new-card-due" placeholder="Vencimento"><button class="rrpg-submit-sm" id="add-card-btn">Salvar</button></div>';
+        (getCreditCards() || []).forEach(card => {
+          const usage = getCreditCardUsage(card);
+          html += '<div class="rrpg-card" style="margin-top:10px;padding:12px;">';
+          html += '<div class="rrpg-section-head"><div style="font-weight:700">' + esc(card.name) + '</div><span class="rrpg-goal-reward">' + brl(usage.available) + ' livre</span></div>';
+          html += '<div class="rrpg-goal-progress-text">Limite: ' + brl(card.limit) + ' · Utilizado: ' + brl(usage.used) + ' · Fechamento: ' + card.closingDay + ' · Vencimento: ' + card.dueDay + '</div>';
+          html += '<div class="rrpg-progress-track" style="margin-top:8px;"><div class="rrpg-progress-fill" style="width:' + usage.percent + '%"></div></div>';
+          html += '<div class="rrpg-checklist-actions"><button class="rrpg-outline-btn" data-edit-card="' + card.id + '">Editar</button><button class="rrpg-outline-btn" data-delete-card="' + card.id + '">Excluir</button></div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">💳 Registrar Compra no Cartão</div>';
+        html += '<div class="rrpg-newlist"><select id="new-credit-card">' + getCreditCards().map(card => '<option value="' + card.id + '">' + esc(card.name) + '</option>').join('') + '</select><input type="text" id="new-credit-desc" placeholder="Nome da compra"><input type="text" id="new-credit-category" placeholder="Categoria"></div>';
+        html += '<div class="rrpg-newlist"><input type="text" inputmode="decimal" id="new-credit-amount" placeholder="Valor total"><input type="date" id="new-credit-date" value="' + todayStr() + '"><select id="new-credit-payment-type"><option value="credit">Cartão de crédito</option></select></div>';
+        html += '<div class="rrpg-newlist"><select id="new-credit-installment-type"><option value="avista">À vista</option><option value="parcelado">Parcelado</option></select><input type="number" id="new-credit-installments" placeholder="Parcelas" min="1" value="1"><input type="number" id="new-credit-installment-value" placeholder="Valor da parcela" min="0"></div>';
+        html += '<button class="rrpg-submit-sm" id="add-credit-purchase-btn" style="width:100%;margin-top:8px;">Salvar compra</button></div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📅 Parcelamentos Ativos</div>';
+        const activeInstallments = (state.finance.creditPurchases || []).filter(p => (p.installments || []).length > 1);
+        if (!activeInstallments.length) html += '<div class="rrpg-empty">Nenhum parcelamento ativo.</div>';
+        activeInstallments.forEach(purchase => {
+          const card = getCreditCards().find(c => c.id === purchase.cardId);
+          const current = (purchase.installments || []).filter(i => !i.paid).length;
+          const paid = (purchase.installments || []).filter(i => i.paid).length;
+          const nextInstallment = (purchase.installments || []).find(i => !i.paid) || purchase.installments[purchase.installments.length - 1];
+          html += '<div class="rrpg-card" style="margin-top:8px;padding:12px;">';
+          html += '<div style="font-weight:700">' + esc(purchase.description) + '</div>';
+          html += '<div class="rrpg-goal-progress-text">Cartão: ' + esc(card ? card.name : '—') + ' · Total: ' + brl(purchase.amount) + '</div>';
+          html += '<div class="rrpg-goal-progress-text">Parcelamento: ' + (paid + 1) + '/' + purchase.totalInstallments + ' · Restam: ' + current + ' · Término previsto: ' + (nextInstallment ? nextInstallment.dueDate.slice(0,7) : '—') + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Previsão financeira</div>';
+        const forecast = getCreditCardForecast();
+        if (!forecast.length) html += '<div class="rrpg-empty">Sem compromissos futuros.</div>';
+        forecast.forEach(item => {
+          html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + item.monthKey + ': ' + brl(item.total) + '</div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📋 Histórico de faturas e compras</div>';
+        const purchaseHistory = (state.finance.creditPurchases || []).slice(0, 12);
+        if (!purchaseHistory.length) html += '<div class="rrpg-empty">Nenhuma compra registrada.</div>';
+        purchaseHistory.forEach(purchase => {
+          const card = getCreditCards().find(c => c.id === purchase.cardId);
+          html += '<div class="rrpg-list-row"><div class="nm">' + esc(purchase.description) + '<div class="sub">' + fmtDate(purchase.purchaseDate) + ' · ' + esc(card ? card.name : '—') + '</div></div><div class="vv neg">-' + brl(purchase.amount) + '</div><button class="rrpg-shop-del" data-delete-credit-purchase="' + purchase.id + '">✕</button></div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">⬇️ Exportar dados</div><div class="rrpg-backup-row"><button class="rrpg-outline-btn" id="export-csv-btn">CSV</button><button class="rrpg-outline-btn" id="export-xls-btn">Excel</button></div></div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Gastos por categoria</div>';
+        const categoryBreakdown = computeFinanceCategoryBreakdown(todayStr().slice(0,7));
+        if (!categoryBreakdown.length) html += '<div class="rrpg-empty">Sem categorias ainda.</div>';
+        categoryBreakdown.forEach(item => { html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + esc(item.label) + ': ' + brl(item.total) + '</div>'; });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Estatísticas mensais/anuais</div>';
+        html += '<div class="rrpg-goal-progress-text">Mês atual: ' + brl(computeFinanceSummary(todayStr().slice(0,7)).despesas) + '</div>';
+        html += '<div class="rrpg-goal-progress-text">Ano: ' + brl(state.expenses.reduce((s,e)=>s+Number(e.amount||0),0) + (state.finance.bills||[]).reduce((s,b)=>s+Number(b.amount||0),0)) + '</div>';
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Faturas por cartão</div>';
+        (getCreditCards() || []).forEach(card => {
+          const usage = getCreditCardUsage(card);
+          html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + esc(card.name) + ': ' + brl(usage.used) + ' / ' + brl(card.limit) + ' (' + usage.percent + '%)</div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Conquistas</div>';
+        html += '<div class="rrpg-goal-progress-text">💳 Primeira compra registrada</div>';
+        html += '<div class="rrpg-goal-progress-text">💰 Fatura paga antes do vencimento</div>';
+        html += '<div class="rrpg-goal-progress-text">📉 Menos de 30% do limite</div>';
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 XP</div>';
+        html += '<div class="rrpg-goal-progress-text">+5 XP ao registrar despesas e manter controle atualizado.</div>';
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Alertas</div>';
+        getFinanceAlerts().forEach(alert => { html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + esc(alert.title) + ': ' + esc(alert.message) + '</div>'; });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Próximas faturas</div>';
+        (getCreditCards() || []).forEach(card => {
+          html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + esc(card.name) + ' · Fechamento ' + card.closingDay + ' · Vencimento ' + card.dueDay + '</div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Faturas anteriores</div>';
+        (getCreditCards() || []).forEach(card => {
+          html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + esc(card.name) + ' · ' + brl(getCreditCardUsage(card).used) + ' utilizado</div>';
+        });
+        html += '</div>';
+        html += '<div class="rrpg-card"><div class="rrpg-section-label" style="margin-bottom:10px">📈 Limite disponível</div>';
+        (getCreditCards() || []).forEach(card => {
+          const usage = getCreditCardUsage(card);
+          html += '<div class="rrpg-goal-progress-text" style="margin-bottom:6px;">' + esc(card.name) + ': ' + brl(usage.available) + ' restante</div>';
+        });
+        html += '</div>';
+        html += '</div>';
       }
 
       if (finSubTab === 'relatorios') {
@@ -1520,10 +2008,35 @@
     if (activeTab === 'missoes') {
       root.querySelectorAll('[data-msubtab]').forEach(el => el.onclick = () => { missionSubTab = el.getAttribute('data-msubtab'); render(); });
       root.querySelectorAll('[data-mcat]').forEach(el => el.onclick = (e) => { if (e.target.closest('[data-del-mission-cat]')) return; missionFilterCat = el.getAttribute('data-mcat'); render(); });
+      root.querySelectorAll('[data-checklist-filter]').forEach(el => el.onclick = () => { checklistFilterCat = el.getAttribute('data-checklist-filter'); render(); });
       root.querySelectorAll('[data-del-mission-cat]').forEach(el => el.onclick = (e) => { e.stopPropagation(); const id = el.getAttribute('data-del-mission-cat'); if (confirm('Excluir esta categoria de missão?')) { removeMissionCategory(id); render(); } });
       root.querySelectorAll('[data-complete-mission]').forEach(el => el.onclick = () => handleCompleteMission(el.getAttribute('data-complete-mission')));
       root.querySelectorAll('[data-del-mission]').forEach(el => el.onclick = () => { state.missions = state.missions.filter(m => m.id !== el.getAttribute('data-del-mission')); persist(); render(); });
       root.querySelectorAll('[data-claim-achieve]').forEach(el => el.onclick = () => handleClaimManualAchievement(el.getAttribute('data-claim-achieve')));
+      root.querySelectorAll('[data-toggle-checklist-item]').forEach(el => el.onchange = () => { toggleChecklistItem(el.getAttribute('data-toggle-checklist-item'), el.getAttribute('data-item-id')); render(); });
+      root.querySelectorAll('[data-edit-checklist-item]').forEach(el => el.onclick = () => {
+        const checklistId = el.getAttribute('data-edit-checklist-item');
+        const itemId = el.getAttribute('data-item-id');
+        const checklist = getChecklistById(checklistId);
+        const item = checklist ? checklist.items.find(x => x.id === itemId) : null;
+        if (!checklist || !item) return;
+        const nextText = prompt('Editar item', item.text);
+        if (nextText && nextText.trim()) {
+          updateChecklistItemText(checklistId, itemId, nextText);
+          render();
+        }
+      });
+      root.querySelectorAll('[data-add-checklist-item]').forEach(el => el.onclick = () => {
+        const checklistId = el.getAttribute('data-add-checklist-item');
+        const input = root.querySelector('#checklist-item-input-' + checklistId);
+        if (input) {
+          addChecklistItem(checklistId, input.value);
+          input.value = '';
+          render();
+        }
+      });
+      root.querySelectorAll('[data-delete-checklist]').forEach(el => el.onclick = () => { if (confirm('Excluir este checklist?')) { deleteChecklist(el.getAttribute('data-delete-checklist')); render(); } });
+      root.querySelectorAll('[data-create-mission-from-checklist]').forEach(el => el.onclick = () => { createMissionFromChecklist(el.getAttribute('data-create-mission-from-checklist')); render(); });
       
       root.querySelectorAll('[data-redeem]').forEach(el => el.onclick = () => { const id=el.getAttribute('data-redeem'); const r=state.rewards.find(x=>x.id===id); if(r && state.character.gold>=r.cost){ state.character.gold-=r.cost; persist(); pushToast({title:"Resgatado!", sub:r.name}); render(); } });
       root.querySelectorAll('[data-del-reward]').forEach(el => el.onclick = () => { state.rewards = state.rewards.filter(r => r.id !== el.getAttribute('data-del-reward')); persist(); render(); });
@@ -1536,7 +2049,33 @@
       if (aCat) aCat.onclick = () => { const nm = root.querySelector('#new-cat-name').value.trim(); if(nm){ state.missionCategories.push({id:'cat_'+uid(), name:nm, color:newCatColor}); persist(); render(); } };
 
       const aMis = root.querySelector('#add-mission-btn');
-      if (aMis) aMis.onclick = () => { const title = root.querySelector('#new-mission-title').value.trim(); const cat = root.querySelector('#new-mission-cat').value; const xp = parseInt(root.querySelector('#new-mission-xp').value)||10; const gold = parseInt(root.querySelector('#new-mission-gold').value)||5; const difficulty = root.querySelector('#new-mission-difficulty').value || 'fácil'; const period = root.querySelector('#new-mission-period').value || 'diária'; if(title){ state.missions.push({id:uid(), title, categoryId:cat, xp, gold, lastCompletedDate:null, difficulty, period, type:'standard', progress:0, target:1}); persist(); render(); } };
+      if (aMis) aMis.onclick = () => { const title = root.querySelector('#new-mission-title').value.trim(); const cat = root.querySelector('#new-mission-cat').value; const xp = parseInt(root.querySelector('#new-mission-xp').value)||10; const gold = parseInt(root.querySelector('#new-mission-gold').value)||5; const difficulty = root.querySelector('#new-mission-difficulty').value || 'fácil'; const period = root.querySelector('#new-mission-period').value || 'diária'; if(title){ state.missions.push({id:uid(), title, categoryId:cat, xp, gold, lastCompletedDate:null, difficulty, period, type:'standard', progress:0, target:1, recurrenceType:'unique', checklistMode:'independent'}); persist(); render(); } };
+
+      const aChecklist = root.querySelector('#add-checklist-btn');
+      if (aChecklist) aChecklist.onclick = () => {
+        const title = root.querySelector('#new-checklist-title').value.trim();
+        const category = root.querySelector('#new-checklist-category').value.trim() || 'Geral';
+        const link = root.querySelector('#new-checklist-link').value;
+        const mode = root.querySelector('#new-checklist-mode').value;
+        const missionSelect = root.querySelector('#new-checklist-mission');
+        const missionTitle = root.querySelector('#new-checklist-mission-title').value.trim();
+        const recurrence = root.querySelector('#new-checklist-recurrence').value;
+        const interval = parseInt(root.querySelector('#new-checklist-interval').value) || 1;
+        const autoReset = root.querySelector('#new-checklist-autoreset').value === 'yes';
+        const xpBonus = parseInt(root.querySelector('#new-checklist-xp-bonus').value) || 0;
+        const goldBonus = parseInt(root.querySelector('#new-checklist-gold-bonus').value) || 0;
+        if (!title) return;
+        let linkedMissionId = null;
+        if (link === 'existing' && missionSelect && missionSelect.value) {
+          linkedMissionId = missionSelect.value;
+        } else if (link === 'new' && missionTitle) {
+          const mission = { id: uid(), title: missionTitle, categoryId: 'delivery', xp: 60, gold: 15, lastCompletedDate: null, type: 'standard', progress: 0, target: 1, difficulty: 'médio', period: 'diária', recurrenceType: recurrence, customIntervalDays: interval, autoResetChecklist: autoReset, checklistMode: mode, linkedChecklistId: null };
+          state.missions.push(mission);
+          linkedMissionId = mission.id;
+        }
+        createChecklist({ title, category, linkedMissionId, missionMode: mode, recurrenceType: recurrence, autoReset, xpBonus, goldBonus });
+        render();
+      };
     }
 
     // --- ABA FINANCEIRO ---
@@ -1626,10 +2165,52 @@
         aCard.onclick = () => {
           const name = root.querySelector('#new-card-name').value.trim();
           const limit = parseFloat(root.querySelector('#new-card-limit').value.replace(",","."))||0;
-          const used = parseFloat(root.querySelector('#new-card-used').value.replace(",","."))||0;
-          if(name){ state.finance.cards.push({id:uid(), name, limit, used}); persist(); pushToast({title:"Cartão cadastrado"}); render(); }
+          const closingDay = parseInt(root.querySelector('#new-card-closing').value) || 1;
+          const dueDay = parseInt(root.querySelector('#new-card-due').value) || 10;
+          if(name){ addCreditCard({ name, limit, closingDay, dueDay }); pushToast({title:"Cartão cadastrado"}); render(); }
         };
       }
+
+      root.querySelectorAll('[data-edit-card]').forEach(el => el.onclick = () => {
+        const cardId = el.getAttribute('data-edit-card');
+        const card = (state.finance.cards || []).find(c => c.id === cardId);
+        if (!card) return;
+        const name = prompt('Nome do cartão', card.name);
+        const limit = parseFloat(prompt('Limite total', String(card.limit || 0)).replace(",",".")) || 0;
+        const closingDay = parseInt(prompt('Dia de fechamento', String(card.closingDay || 1))) || 1;
+        const dueDay = parseInt(prompt('Dia de vencimento', String(card.dueDay || 10))) || 10;
+        if (name) updateCreditCard(cardId, { name, limit, closingDay, dueDay });
+        render();
+      });
+      root.querySelectorAll('[data-delete-card]').forEach(el => el.onclick = () => { if (confirm('Excluir este cartão?')) { deleteCreditCard(el.getAttribute('data-delete-card')); render(); } });
+
+      const aCreditPurchase = root.querySelector('#add-credit-purchase-btn');
+      if (aCreditPurchase) {
+        aCreditPurchase.onclick = () => {
+          const cardId = root.querySelector('#new-credit-card').value;
+          const desc = root.querySelector('#new-credit-desc').value.trim();
+          const category = root.querySelector('#new-credit-category').value.trim() || 'Outros';
+          const amount = parseFloat(root.querySelector('#new-credit-amount').value.replace(",",".")) || 0;
+          const purchaseDate = root.querySelector('#new-credit-date').value || todayStr();
+          const installmentType = root.querySelector('#new-credit-installment-type').value;
+          const totalInstallments = parseInt(root.querySelector('#new-credit-installments').value) || 1;
+          const installmentValue = parseFloat(root.querySelector('#new-credit-installment-value').value.replace(",",".")) || 0;
+          if (cardId && desc && amount > 0) {
+            addCreditPurchase({ cardId, description: desc, category, amount, purchaseDate, paymentType: 'credit', installmentType, totalInstallments, installmentValue, currentInstallment: installmentType === 'parcelado' ? 1 : 1, dueDate: purchaseDate });
+            state.character.xp += 5;
+            persist();
+            pushToast({ title: 'Compra registrada' });
+            render();
+          }
+        };
+      }
+
+      root.querySelectorAll('[data-delete-credit-purchase]').forEach(el => el.onclick = () => { if (confirm('Excluir esta compra?')) { deleteCreditPurchase(el.getAttribute('data-delete-credit-purchase')); render(); } });
+
+      const exportCsvBtn = root.querySelector('#export-csv-btn');
+      if (exportCsvBtn) exportCsvBtn.onclick = exportFinanceCsv;
+      const exportXlsBtn = root.querySelector('#export-xls-btn');
+      if (exportXlsBtn) exportXlsBtn.onclick = exportFinanceXlsx;
 
       const aInvest = root.querySelector('#add-invest-btn');
       if (aInvest) {
